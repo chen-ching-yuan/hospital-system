@@ -253,7 +253,20 @@ app.post("/api/appointments", async (req, res) => {
         appt_seq: body.appt_seq || 1,
         status: body.status || "預約",
       };
-      await pool.execute("INSERT INTO APPOINTMENT SET ?", [data]);
+
+      const sqlA = `
+        INSERT INTO APPOINTMENT (appt_id, sch_id, pat_id, appt_seq, status)
+        VALUES (?, ?, ?, ?, ?)
+      `;
+      const valsA = [
+        data.appt_id,
+        data.sch_id,
+        data.pat_id,
+        data.appt_seq,
+        data.status,
+      ];
+
+      await pool.execute(sqlA, valsA);
       return res.json({ ok: true, message: "建立掛號成功(完整模式)" });
     }
 
@@ -267,7 +280,7 @@ app.post("/api/appointments", async (req, res) => {
       });
     }
 
-    // 1) 找到對應的排班（同一位醫生、同一天的第一筆班別）
+    // 1) 找到對應的排班
     const [schRows] = await pool.query(
       "SELECT sch_id FROM SCHEDULE WHERE doc_id = ? AND work_date = ? ORDER BY shift_name LIMIT 1",
       [doc_id, appt_date]
@@ -282,7 +295,7 @@ app.post("/api/appointments", async (req, res) => {
 
     const sch_id = schRows[0].sch_id;
 
-    // 2) 決定這個班別的掛號順序 appt_seq
+    // 2) 決定 appt_seq
     const [seqRows] = await pool.query(
       "SELECT COALESCE(MAX(appt_seq), 0) AS max_seq FROM APPOINTMENT WHERE sch_id = ?",
       [sch_id]
@@ -290,22 +303,31 @@ app.post("/api/appointments", async (req, res) => {
     const appt_seq = seqRows[0].max_seq + 1;
 
     // 3) 產生 appt_id
-    const appt_id = await generateApptId();
+    const [countRows] = await pool.query(
+      "SELECT COUNT(*) AS cnt FROM APPOINTMENT"
+    );
+    const next = countRows[0].cnt + 1;
+    const num = String(next).padStart(3, "0");
+    const appt_id = `A${num}`;
 
-    const data = {
-      appt_id,
-      sch_id,
-      pat_id,
-      appt_seq,
-      status: "預約",
-    };
+    const sqlB = `
+      INSERT INTO APPOINTMENT (appt_id, sch_id, pat_id, appt_seq, status)
+      VALUES (?, ?, ?, ?, ?)
+    `;
+    const valsB = [appt_id, sch_id, pat_id, appt_seq, "預約"];
 
-    await pool.execute("INSERT INTO APPOINTMENT SET ?", [data]);
+    await pool.execute(sqlB, valsB);
 
     res.json({
       ok: true,
       message: "建立掛號成功(簡易模式)",
-      data,
+      data: {
+        appt_id,
+        sch_id,
+        pat_id,
+        appt_seq,
+        status: "預約",
+      },
     });
   } catch (err) {
     console.error("新增掛號錯誤：", err);
