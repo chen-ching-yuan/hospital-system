@@ -172,20 +172,21 @@ app.get("/api/schedules", async (req, res) => {
 // =====================================================
 
 // 新增病患（初診建檔頁）
+// 新增病患（初診建檔頁）
 app.post("/api/patients", async (req, res) => {
   try {
     const body = req.body || {};
 
-    // 只強制姓名必填，pat_id 可有可無（讓 DB 自動編號或用你傳進來的）
-    if (!body.pat_name) {
+    // 1️⃣ pat_name 必填 — 防止空資料
+    if (!body.pat_name || body.pat_name.trim() === "") {
       return res
         .status(400)
-        .json({ ok: false, error: "pat_name 為必填欄位" });
+        .json({ ok: false, error: "病患姓名 pat_name 為必填欄位" });
     }
 
-    // 只挑出 PATIENT 表會用到的欄位
+    // 2️⃣ 只允許這些欄位進 DB（避免多餘欄位）
     const data = cleanObject({
-      pat_id: body.pat_id,          // 若前端沒傳就不會塞
+      pat_id: body.pat_id,
       pat_name: body.pat_name,
       pat_phone: body.pat_phone,
       pat_identity: body.pat_identity,
@@ -193,41 +194,28 @@ app.post("/api/patients", async (req, res) => {
       pat_birth: body.pat_birth,
     });
 
-    const sql = "INSERT INTO PATIENT SET ?";
-    await pool.execute(sql, [data]);
+    // 3️⃣ 若欄位全部被清空 → 直接拒絕
+    if (Object.keys(data).length === 0) {
+      return res
+        .status(400)
+        .json({ ok: false, error: "沒有可寫入的欄位" });
+    }
+
+    // 4️⃣ 改成「明確欄位 INSERT」避免 SET ? 空物件錯誤
+    const cols = Object.keys(data);
+    const placeholders = cols.map(() => "?").join(",");
+    const values = Object.values(data);
+
+    const sql = `
+      INSERT INTO PATIENT (${cols.join(",")})
+      VALUES (${placeholders})
+    `;
+
+    await pool.execute(sql, values);
 
     res.json({ ok: true, message: "新增病患成功" });
   } catch (err) {
     console.error("新增病患錯誤：", err);
-    res.status(500).json({ ok: false, error: err.message });
-  }
-});
-
-// 取得全部病患（測試用）
-app.get("/api/patients", async (req, res) => {
-  try {
-    const [rows] = await pool.query("SELECT * FROM PATIENT ORDER BY pat_id");
-    res.json({ ok: true, data: rows });
-  } catch (err) {
-    console.error("取得病患列表錯誤：", err);
-    res.status(500).json({ ok: false, error: err.message });
-  }
-});
-
-// 取得單一病患
-app.get("/api/patients/:pat_id", async (req, res) => {
-  try {
-    const patId = req.params.pat_id;
-    const [rows] = await pool.query(
-      "SELECT * FROM PATIENT WHERE pat_id = ?",
-      [patId]
-    );
-    if (rows.length === 0) {
-      return res.status(404).json({ ok: false, error: "找不到病患" });
-    }
-    res.json({ ok: true, data: rows[0] });
-  } catch (err) {
-    console.error("取得單一病患錯誤：", err);
     res.status(500).json({ ok: false, error: err.message });
   }
 });
