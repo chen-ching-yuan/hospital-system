@@ -312,16 +312,45 @@ app.post("/api/appointments", async (req, res) => {
     }
 
     // 情況 B：沿用你舊版 app.js 的簡單 payload
-    const { doc_id, pat_id, appt_date } = body;
+     // 現在支援兩種方式：
+    //  1) 直接給 pat_id
+    //  2) 給 pat_identity + pat_birth，由後端幫忙查 pat_id
+    const {
+      doc_id,
+      pat_id: rawPatId,
+      appt_date,
+      pat_identity,
+      pat_birth,
+    } = body;
 
-    if (!doc_id || !pat_id || !appt_date) {
+    let pat_id = rawPatId; // 先用原本傳進來的，沒有再用身份證+生日查
+
+    // 檢查必要欄位
+    if (!doc_id || !appt_date || (!pat_id && !(pat_identity && pat_birth))) {
       return res.status(400).json({
         ok: false,
-        error: "缺少必要欄位：doc_id、pat_id、appt_date 其一",
+        error: "缺少必要欄位：doc_id + (pat_id 或 身分證+生日) + appt_date",
       });
     }
 
-    // 1) 找到對應的排班
+    // 如果沒有 pat_id，但有給身分證＋生日，就去 PATIENT 查 pat_id
+    if (!pat_id && pat_identity && pat_birth) {
+      const [pRows] = await pool.query(
+        "SELECT pat_id FROM PATIENT WHERE pat_identity = ? AND pat_birth = ? LIMIT 1",
+        [pat_identity, pat_birth]
+      );
+
+      if (pRows.length === 0) {
+        return res.status(400).json({
+          ok: false,
+          error: "找不到對應的病患資料，請先建立基本資料",
+        });
+      }
+
+      pat_id = pRows[0].pat_id;
+    }
+
+    // 1) 找到對應的排班（doc_id + 日期）
     const [schRows] = await pool.query(
       "SELECT sch_id FROM SCHEDULE WHERE doc_id = ? AND work_date = ? ORDER BY shift_name LIMIT 1",
       [doc_id, appt_date]
