@@ -172,16 +172,27 @@ app.get("/api/schedules", async (req, res) => {
 // =====================================================
 
 // 新增病患（初診建檔頁）
-// 新增病患（初診建檔頁）
 app.post("/api/patients", async (req, res) => {
   try {
     const body = req.body || {};
 
-    // 1️⃣ pat_name 必填 — 防止空資料
-    if (!body.pat_name || body.pat_name.trim() === "") {
-      return res
-        .status(400)
-        .json({ ok: false, error: "病患姓名 pat_name 為必填欄位" });
+    // 1️⃣ 所有欄位必填：pat_id, pat_name, pat_phone, pat_identity, pat_gender, pat_birth
+    const requiredFields = [
+      "pat_id",
+      "pat_name",
+      "pat_phone",
+      "pat_identity",
+      "pat_gender",
+      "pat_birth",
+    ];
+
+    for (const field of requiredFields) {
+      const value = body[field];
+      if (value === undefined || String(value).trim() === "") {
+        return res
+          .status(400)
+          .json({ ok: false, error: "所有欄位皆為必填，請完整填寫。" });
+      }
     }
 
     // 2️⃣ 只允許這些欄位進 DB（避免多餘欄位）
@@ -194,14 +205,14 @@ app.post("/api/patients", async (req, res) => {
       pat_birth: body.pat_birth,
     });
 
-    // 3️⃣ 若欄位全部被清空 → 直接拒絕
+    // 理論上這裡一定不會是空，但保險起見再檢查一次
     if (Object.keys(data).length === 0) {
       return res
         .status(400)
         .json({ ok: false, error: "沒有可寫入的欄位" });
     }
 
-    // 4️⃣ 改成「明確欄位 INSERT」避免 SET ? 空物件錯誤
+    // 3️⃣ 明確欄位 INSERT
     const cols = Object.keys(data);
     const placeholders = cols.map(() => "?").join(",");
     const values = Object.values(data);
@@ -216,6 +227,36 @@ app.post("/api/patients", async (req, res) => {
     res.json({ ok: true, message: "新增病患成功" });
   } catch (err) {
     console.error("新增病患錯誤：", err);
+    res.status(500).json({ ok: false, error: err.message });
+  }
+});
+
+// 取得下一個病歷號（例如 P001, P002, P003...）
+app.get("/api/patients/next-id", async (req, res) => {
+  try {
+    // 取目前 PATIENT 中最大的 pat_id
+    const [rows] = await pool.query(
+      "SELECT pat_id FROM PATIENT ORDER BY pat_id DESC LIMIT 1"
+    );
+
+    let nextId = "P001";
+
+    if (rows.length > 0 && rows[0].pat_id) {
+      const lastId = rows[0].pat_id;
+      const match = lastId.match(/^P(\d+)$/); // 例如 P001, P023
+
+      if (match) {
+        const num = parseInt(match[1], 10) + 1;
+        nextId = "P" + String(num).padStart(3, "0"); // 補成三位數
+      } else {
+        // 如果目前資料不是 P 開頭的格式，就加個 _1 避免壞掉
+        nextId = lastId + "_1";
+      }
+    }
+
+    res.json({ ok: true, pat_id: nextId });
+  } catch (err) {
+    console.error("取得下一個病歷號錯誤：", err);
     res.status(500).json({ ok: false, error: err.message });
   }
 });
