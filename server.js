@@ -499,6 +499,83 @@ app.put("/api/appointments/:appt_id/cancel", async (req, res) => {
   }
 });
 
+// SQL 測試主控台 API（管理用）
+// 允許 SELECT / INSERT / UPDATE / DELETE
+// 但禁止 DROP / ALTER / TRUNCATE / CREATE / GRANT / REVOKE 等高風險操作
+app.post("/api/sql", async (req, res) => {
+  try {
+    const { sql } = req.body || {};
+    if (!sql || typeof sql !== "string") {
+      return res.status(400).json({ ok: false, error: "請提供 SQL 指令字串。" });
+    }
+
+    // 正規化字串：去頭尾空白、轉大寫、壓縮空白
+    const normalized = sql.trim();
+    const upper = normalized.toUpperCase().replace(/\s+/g, " ");
+
+    // 安全防護 1：禁止多語句（避免 ; 中間串很多指令）
+    // 允許最後一個分號，例如 "SELECT * FROM PATIENT;"
+    const semicolonIndex = upper.indexOf(";");
+    if (semicolonIndex !== -1 && semicolonIndex < upper.length - 1) {
+      return res.status(400).json({
+        ok: false,
+        error: "目前僅允許單一 SQL 指令，不支援多語句（多個分號）。",
+      });
+    }
+
+    // 取開頭關鍵字
+    const firstWordMatch = upper.match(/^(SELECT|INSERT|UPDATE|DELETE|DROP|ALTER|TRUNCATE|CREATE|GRANT|REVOKE)/);
+    const firstWord = firstWordMatch ? firstWordMatch[1] : null;
+
+    if (!firstWord) {
+      return res.status(400).json({
+        ok: false,
+        error: "無法判斷 SQL 指令類型，請確認語法是否正確。",
+      });
+    }
+
+    // 安全防護 2：禁止高風險語句
+    const forbidden = ["DROP", "ALTER", "TRUNCATE", "CREATE", "GRANT", "REVOKE"];
+    if (forbidden.includes(firstWord)) {
+      return res.status(400).json({
+        ok: false,
+        error: `為避免破壞資料庫結構，不允許執行 ${firstWord} 指令。`,
+      });
+    }
+
+    // 允許：SELECT / INSERT / UPDATE / DELETE
+    const [rows, fields] = await pool.query(sql);
+
+    // 對於 SELECT，rows 會是陣列；對於 INSERT/UPDATE/DELETE，rows 會是一個 ResultSetHeader 物件
+    if (Array.isArray(rows)) {
+      // 查詢類結果
+      return res.json({
+        ok: true,
+        type: "SELECT",
+        rows,
+        fields: fields ? fields.map(f => f.name) : [],
+      });
+    } else {
+      // 寫入 / 更新 / 刪除 類結果
+      const info = rows || {};
+      return res.json({
+        ok: true,
+        type: firstWord,          // "INSERT" / "UPDATE" / "DELETE"
+        rows: [],                 // 前端看到不是陣列就不會畫表格，只看 jsonOutput
+        affectedRows: info.affectedRows,
+        changedRows: info.changedRows,
+        insertId: info.insertId,
+      });
+    }
+  } catch (err) {
+    console.error("SQL console error:", err);
+    res.status(500).json({
+      ok: false,
+      error: err.message || "伺服器錯誤",
+    });
+  }
+});
+
 // =====================================================
 //  啟動 Server
 // =====================================================
