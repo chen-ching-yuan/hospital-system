@@ -5,6 +5,10 @@ const express = require("express");
 const cors = require("cors");
 const pool = require("./db"); // 你的 db.js
 
+// 新增：HTTP + WebSocket
+const http = require("http");
+const WebSocket = require("ws");
+
 const app = express();
 
 // ---------------- 共用設定 ----------------
@@ -312,7 +316,7 @@ app.post("/api/appointments", async (req, res) => {
     }
 
     // 情況 B：沿用你舊版 app.js 的簡單 payload
-     // 現在支援兩種方式：
+    // 現在支援兩種方式：
     //  1) 直接給 pat_id
     //  2) 給 pat_identity + pat_birth，由後端幫忙查 pat_id
     const {
@@ -577,9 +581,41 @@ app.post("/api/sql", async (req, res) => {
 });
 
 // =====================================================
-//  啟動 Server
+//  WebSocket：在線人數
+// =====================================================
+let onlineCount = 0;
+
+const server = http.createServer(app);
+const wss = new WebSocket.Server({ server });
+
+// 提供一個 HTTP API 也可以查（非必要，可拿來測試）
+app.get("/api/online", (req, res) => {
+  res.json({ ok: true, online: onlineCount });
+});
+
+function broadcastOnline() {
+  const msg = JSON.stringify({ online: onlineCount });
+  wss.clients.forEach((client) => {
+    if (client.readyState === WebSocket.OPEN) {
+      client.send(msg);
+    }
+  });
+}
+
+wss.on("connection", (ws) => {
+  onlineCount++;
+  broadcastOnline();
+
+  ws.on("close", () => {
+    onlineCount = Math.max(onlineCount - 1, 0);
+    broadcastOnline();
+  });
+});
+
+// =====================================================
+//  啟動 Server（改成用 server.listen）
 // =====================================================
 const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => {
+server.listen(PORT, () => {
   console.log(`Server 已啟動：http://localhost:${PORT}`);
 });
